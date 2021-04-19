@@ -217,13 +217,19 @@ class __manual_lifetime<_T&&> {
     _T* __value_;
 };
 
+struct use_allocator_arg {};
+
 namespace ranges {
 
-template <typename _Rng>
+template <typename _Rng, typename _Allocator = std::allocator<std::byte>>
 struct elements_of {
     explicit constexpr elements_of(_Rng&& __rng) noexcept
-    : __range_(static_cast<_Rng&&>(__rng))
+    requires std::is_default_constructible_v<_Allocator>
+    : __range(static_cast<_Rng&&>(__rng))
     {}
+
+    constexpr elements_of(_Rng&& __rng, _Allocator&& __alloc) noexcept
+    : __range((_Rng&&)__rng), __alloc((_Allocator&&)__alloc) {}
 
     constexpr elements_of(elements_of&&) noexcept = default;
 
@@ -232,11 +238,16 @@ struct elements_of {
     constexpr elements_of &operator=(elements_of &&) = delete;
 
     constexpr _Rng&& get() && noexcept {
-        return static_cast<_Rng&&>(__range_);
+        return static_cast<_Rng&&>(__range);
+    }
+
+    constexpr _Allocator&& get_allocator() && noexcept {
+        return static_cast<_Allocator&&>(__alloc);
     }
 
 private:
-    _Rng &&__range_; // \expos
+    [[no_unique_address]] _Allocator __alloc; // \expos
+    _Rng && __range; // \expos
 };
 
 template <typename _Rng>
@@ -254,7 +265,6 @@ constexpr size_t __aligned_allocation_size(size_t s, size_t a) {
     return (s + a - 1) & ~(a - 1);
 }
 
-struct use_allocator_arg {};
 
 template <typename _Ref,
           typename _Value = std::remove_cvref_t<_Ref>,
@@ -454,18 +464,20 @@ struct __generator_promise_base
         return std::move(__g).get();
     }
 
-    template <std::ranges::range _Rng>
-    __yield_sequence_awaiter<generator<_Ref>> yield_value(std::ranges::elements_of<_Rng> __x) {
+    template <std::ranges::range _Rng, typename _Allocator>
+    __yield_sequence_awaiter<generator<_Ref, std::ranges::range_value_t<_Rng>, _Allocator>> yield_value(std::ranges::elements_of<_Rng, _Allocator> __x) {
         // TODO: Consider propagating parent coroutine's allocator to child generator
         // coroutine here.
-        return yield_value(std::ranges::elements_of([](_Rng&& __rng) -> generator<_Ref> {
+
+        // TODO: Should the promise type be templated on value to reduce template instantiations?
+        return yield_value(std::ranges::elements_of([](_Rng&& __rng, allocator_arg_t, _Allocator alloc) -> generator<_Ref, std::ranges::range_value_t<_Rng>, _Allocator> {
             auto __it = std::ranges::begin(__rng);
             auto __itEnd = std::ranges::end(__rng);
             while (__it != __itEnd) {
                 co_yield *__it;
                 ++__it;
             }
-        }(std::move(__x).get())));
+        }(std::move(__x.get()), std::move(__x.get_allocator())) ) );
     }
 
     void resume() {

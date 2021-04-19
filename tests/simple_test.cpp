@@ -19,7 +19,7 @@ static_assert(std::ranges::range<std::generator<int>>);
 // A generator should also be a 'view'
 static_assert(std::ranges::view<std::generator<int>>);
 
-// 
+//
 static_assert(std::is_same_v<
     std::ranges::range_reference_t<std::generator<const std::string&>>,
     const std::string&>);

@@ -24,8 +24,9 @@ static_assert(std::is_same_v<
     std::ranges::range_reference_t<std::generator<const std::string&>>,
     const std::string&>);
 static_assert(std::is_same_v<
-    std::ranges::range_value_t<std::generator<const std::string&>>,
+    std::ranges::range_value_t<std::generator<std::string>>,
     std::string>);
+
 
 void test_default_constructor() {
     std::generator<int> g;
@@ -58,7 +59,7 @@ void test_range_based_for_loop() {
     std::generator<int> g = []() -> std::generator<int> { co_yield 42; }();
     size_t count = 0;
     for (decltype(auto) x : g) {
-        static_assert(std::is_same_v<decltype(x), int>);
+        static_assert(std::is_same_v<decltype(x), const int&>);
         CHECK(x == 42);
         ++count;
     }
@@ -84,12 +85,12 @@ void test_range_based_for_loop_2() {
     size_t elementCount = 0;
 
     for (decltype(auto) x : g) {
-        static_assert(std::is_same_v<decltype(x), X>);
+        static_assert(std::is_same_v<decltype(x), const X&>);
 
         // 1. temporary in co_yield expression
         // 2. reference value stored in promise
         // 3. iteration variable
-        CHECK(count == 3);
+        CHECK(count == 2);
         ++elementCount;
     }
 
@@ -113,13 +114,16 @@ void test_range_based_for_loop_3() {
         co_yield X{};
     }();
 
+    static_assert(std::same_as<const std::__generator_storage_type_t<const X&> &, const X&>);
+
     size_t elementCount = 0;
 
     for (decltype(auto) x : g) {
         static_assert(std::is_same_v<decltype(x), const X&>);
 
         // 1. temporary in co_yield expression
-        CHECK(count == 1);
+        // 2. move inside awaiter
+        CHECK(count == 2);
         ++elementCount;
     }
 
@@ -155,11 +159,11 @@ void test_dereference_iterator_copies_reference() {
             auto beforeDtorCount = dtorCount;
             {
                 decltype(auto) x = *it;
-                CHECK(ctorCount == beforeCtorCount + 1);
+                CHECK(ctorCount == beforeCtorCount);
                 CHECK(dtorCount == beforeDtorCount);
             }
-            CHECK(ctorCount == beforeCtorCount + 1);
-            CHECK(dtorCount == beforeDtorCount + 1);
+            CHECK(ctorCount == beforeCtorCount);
+            CHECK(dtorCount == beforeDtorCount);
         }
     }
 

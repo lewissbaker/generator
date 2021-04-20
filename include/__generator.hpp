@@ -139,16 +139,6 @@ concept range = requires(_T& __t) {
 #endif // !__has_include(<ranges>)
 
 
-///////////////////////////////////////////////////////////////////////////////
-// Begin implementation
-
-// Define NESTED_GENERATOR=0 before including this file to disable nested
-// generator support. e.g. to compare performance between nested and non-nested
-// implementations.
-#ifndef NESTED_GENERATOR
-# define NESTED_GENERATOR 1
-#endif
-
 namespace std {
 
 template <typename _T>
@@ -332,21 +322,15 @@ struct __generator_promise_base
     template <typename _Ref2, typename _Value, typename _Alloc>
     friend class generator;
 
-#if NESTED_GENERATOR
     __generator_promise_base* __root_;
     std::coroutine_handle<> __parentOrLeaf_;
     std::exception_ptr *__exception_ = nullptr;
-#endif
     __manual_lifetime<_Ref> __value_;
 
-#if NESTED_GENERATOR
     explicit __generator_promise_base(std::coroutine_handle<> thisCoro) noexcept
         : __root_(this)
         , __parentOrLeaf_(thisCoro)
     {}
-#else
-    __generator_promise_base() noexcept = default;
-#endif
 
     std::suspend_always initial_suspend() noexcept {
         return {};
@@ -355,15 +339,12 @@ struct __generator_promise_base
     void return_void() noexcept {}
 
     void unhandled_exception() {
-#if NESTED_GENERATOR
         if (__exception_ != nullptr) {
             *__exception_ = std::current_exception();
         }
-#endif
         throw;
     }
 
-#if NESTED_GENERATOR
     // Transfers control back to the parent of a nested coroutine
     struct __final_awaiter {
         bool await_ready() noexcept {
@@ -469,24 +450,6 @@ struct __generator_promise_base
         __parentOrLeaf_.resume();
     }
 
-#else // !NESTED_GENERATOR
-    std::suspend_always yield_value(_Ref&& __x) noexcept(std::is_nothrow_move_constructible_v<_Ref>) {
-        __value_.construct((_Ref&&)__x);
-        return {};
-    }
-
-    template <typename _T>
-    requires (!std::is_reference_v<_Ref>) && std::is_convertible_v<_T, _Ref>
-    std::suspend_always yield_value(_T&& __x) noexcept(std::is_nothrow_constructible_v<_Ref, _T>) {
-        __value_.construct((_T&&)__x);
-        return {};
-    }
-
-    std::suspend_always final_suspend() noexcept {
-        return {};
-    }
-#endif
-
     // Disable use of co_await within this coroutine.
     void await_transform() = delete;
 };
@@ -499,9 +462,7 @@ struct __generator_promise<generator<_Ref, _Value, _Alloc>, _ByteAllocator> fina
     : public __generator_promise_base<_Ref>
     , public __promise_base_alloc<_ByteAllocator> {
     __generator_promise() noexcept
-#if NESTED_GENERATOR
     : __generator_promise_base<_Ref>(std::coroutine_handle<__generator_promise>::from_promise(*this))
-#endif
     {}
 
     generator<_Ref, _Value, _Alloc> get_return_object() noexcept {
@@ -610,11 +571,7 @@ public:
 
         iterator &operator++() {
             __coro_.promise().value_.destruct();
-#if NESTED_GENERATOR
             __coro_.promise().resume();
-#else
-            __coro_.resume();
-#endif
             return *this;
         }
         void operator++(int) {
@@ -727,11 +684,7 @@ public:
 
         iterator& operator++() {
             __promise_->__value_.destruct();
-#if NESTED_GENERATOR
             __promise_->resume();
-#else
-            __coro_.resume();
-#endif
             return *this;
         }
 

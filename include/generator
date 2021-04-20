@@ -422,7 +422,7 @@ struct __generator_promise_base
         }
 
         // set the parent, root and exceptions pointer and
-        // resume the nested 
+        // resume the nested
         template<typename _Promise>
         std::coroutine_handle<>
         await_suspend(std::coroutine_handle<_Promise> __h) noexcept {
@@ -625,7 +625,7 @@ public:
             return static_cast<reference>(__coro_.promise().value_.get());
         }
 
-      private: 
+      private:
         friend generator;
 
         explicit iterator(__coroutine_handle __coro) noexcept
@@ -743,7 +743,7 @@ public:
             return static_cast<reference>(__promise_->__value_.get());
         }
 
-      private: 
+      private:
         friend generator;
 
         explicit iterator(__promise_base* __promise, std::coroutine_handle<> __coro) noexcept

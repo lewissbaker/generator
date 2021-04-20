@@ -182,8 +182,18 @@ constexpr size_t __aligned_allocation_size(size_t s, size_t a) {
 }
 
 
+template <typename _Type>
+using __generator_reference_type_t = std::add_lvalue_reference_t<std::add_const_t<_Type>>;
+template <typename _Type>
+
+using __default_generator_value_type_t = std::__remove_cvref_t<__generator_reference_type_t<_Type>>;
+
+template <typename _Ref>
+using __generator_storage_type_t = __default_generator_value_type_t<_Ref>;
+
+
 template <typename _Ref,
-          typename _Value = std::remove_cvref_t<_Ref>,
+          typename _Value     = __default_generator_value_type_t<_Ref>,
           typename _Allocator = use_allocator_arg>
 class generator;
 
@@ -250,13 +260,8 @@ struct __generator_promise_base
 
     __generator_promise_base* __root_;
     std::coroutine_handle<> __parentOrLeaf_;
-    // Note: Using manual_lifetime here to avoid extra calls to exception_ptr
-    // constructor/destructor in cases where it is not needed (i.e. where this
-    // generator coroutine is not used as a nested coroutine).
-    // This member is lazily constructed by the __yield_sequence_awaiter::await_suspend()
-    // method if this generator is used as a nested generator.
     std::exception_ptr __exception_;
-    std::add_pointer_t<std::remove_reference_t<_Ref>> __value_;
+    std::add_pointer_t<__generator_storage_type_t<_Ref>> __value_;
 
     explicit __generator_promise_base(std::coroutine_handle<> thisCoro) noexcept
         : __root_(this)
@@ -307,21 +312,25 @@ struct __generator_promise_base
     }
 
 
-    std::suspend_always yield_value(_Ref __x)
-    requires std::is_lvalue_reference_v<_Ref>
+    std::suspend_always yield_value(const __generator_storage_type_t<_Ref> & __x)
+    requires std::convertible_to<const __generator_storage_type_t<_Ref> &, __generator_reference_type_t<_Ref>>
     {
+        __root_->__value_ = std::addressof(__x);
+        return {};
+    }
+    std::suspend_always yield_value(__generator_storage_type_t<_Ref> & __x) {
         __root_->__value_ = std::addressof(__x);
         return {};
     }
 
     template <typename T>
     auto yield_value(T&& __x)
-    noexcept(std::is_nothrow_constructible_v<_Ref, T>)
-    requires is_constructible_v<_Ref, T>
-
+    noexcept(std::is_nothrow_constructible_v<__generator_storage_type_t<_Ref>, T>)
+    requires is_constructible_v<__generator_storage_type_t<_Ref>, T> &&
+        std::convertible_to<const __generator_storage_type_t<_Ref> &, __generator_reference_type_t<_Ref>>
     {
         struct awaiter : std::suspend_always {
-            std::remove_reference_t<_Ref> __value;
+            __generator_storage_type_t<_Ref> __value;
             std::exception_ptr __exception;
 
 
@@ -501,7 +510,7 @@ public:
         using iterator_category = std::input_iterator_tag;
         using difference_type = std::ptrdiff_t;
         using value_type = _Value;
-        using reference = _Ref;
+        using reference  = __generator_reference_type_t<_Ref>;
         using pointer = std::add_pointer_t<_Ref>;
 
         iterator() noexcept = default;
@@ -609,8 +618,8 @@ public:
         using iterator_category = std::input_iterator_tag;
         using difference_type = std::ptrdiff_t;
         using value_type = _Value;
-        using reference = _Ref;
-        using pointer = std::add_pointer_t<_Ref>;
+        using reference  = __generator_reference_type_t<_Ref>;
+        using pointer    = std::add_pointer_t<__generator_storage_type_t<_Ref>>;
 
         iterator() noexcept = default;
         iterator(const iterator &) = delete;

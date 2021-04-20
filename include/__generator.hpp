@@ -504,6 +504,8 @@ public:
     using promise_type = __generator_promise<generator<_Ref, _Value, _Alloc>, __byte_allocator>;
 };
 
+
+// TODO :  make layout compatible promise casts possible
 template <typename _Ref, typename _Value, typename _Alloc>
 class generator {
     using __byte_allocator = typename std::allocator_traits<std::remove_cvref_t<_Alloc>>::template rebind_alloc<std::byte>;
@@ -530,7 +532,7 @@ public:
         }
     }
 
-    generator& operator=(generator g) noexcept {
+    generator& operator=(generator && g) noexcept {
         swap(g);
         return *this;
     }

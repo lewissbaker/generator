@@ -13,7 +13,6 @@ target_include_directories(stdgenerator
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/>)
 
 target_compile_features(stdgenerator INTERFACE cxx_std_20)
-target_compile_options(stdgenerator INTERFACE -fcoroutines)
 
 enable_testing()
 include(CTest)

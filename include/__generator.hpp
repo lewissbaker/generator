@@ -183,9 +183,10 @@ constexpr size_t __aligned_allocation_size(size_t s, size_t a) {
 
 
 template <typename _Type>
-using __generator_reference_type_t = std::add_lvalue_reference_t<std::add_const_t<_Type>>;
-template <typename _Type>
+using __generator_reference_type_t = std::add_lvalue_reference_t<
+std::conditional_t<std::is_copy_constructible_v<_Type>, std::add_const_t<_Type>, _Type>>;
 
+template <typename _Type>
 using __default_generator_value_type_t = std::__remove_cvref_t<__generator_reference_type_t<_Type>>;
 
 template <typename _Ref>
@@ -318,16 +319,18 @@ struct __generator_promise_base
         __root_->__value_ = std::addressof(__x);
         return {};
     }
-    std::suspend_always yield_value(__generator_storage_type_t<_Ref> & __x) {
+
+    std::suspend_always yield_value(__generator_storage_type_t<_Ref> & __x)
+    requires std::convertible_to<__generator_storage_type_t<_Ref> &, __generator_reference_type_t<_Ref>> {
         __root_->__value_ = std::addressof(__x);
         return {};
     }
 
     template <typename T>
     auto yield_value(T&& __x)
-    noexcept(std::is_nothrow_constructible_v<__generator_storage_type_t<_Ref>, T>)
-    requires is_constructible_v<__generator_storage_type_t<_Ref>, T> &&
-        std::convertible_to<const __generator_storage_type_t<_Ref> &, __generator_reference_type_t<_Ref>>
+    noexcept(std::is_nothrow_constructible_v<__generator_storage_type_t<_Ref>, T&&>)
+    requires is_constructible_v<__generator_storage_type_t<_Ref>, T&&> &&
+        std::convertible_to<__generator_storage_type_t<_Ref> &, __generator_reference_type_t<_Ref>>
     {
         struct awaiter : std::suspend_always {
             __generator_storage_type_t<_Ref> __value;

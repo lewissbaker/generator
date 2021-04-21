@@ -171,6 +171,40 @@ void test_dereference_iterator_copies_reference() {
     CHECK(ctorCount == dtorCount);
 }
 
+void test_move_only_types() {
+    struct move_only {
+        move_only() = default;
+        move_only(const move_only&) = delete;
+        move_only(move_only&&) = default;
+    };
+
+    auto g = []() -> std::generator<move_only> {
+        co_yield move_only{};
+    }();
+
+    for(auto&& x : g) {
+        static_assert(std::same_as<decltype(x), move_only&>, "move only types should produce a mutable reference type");
+        auto y = std::move(x);
+    }
+}
+
+void test_immovable_types() {
+    struct immovable {
+        immovable() = default;
+        immovable(const immovable&) = delete;
+        immovable(immovable&&) = delete;
+    };
+
+    auto g = []() -> std::generator<immovable> {
+        immovable i;
+        co_yield i;
+    }();
+
+    for(auto&& x : g) {
+        static_assert(std::same_as<decltype(x), immovable&>, "immovable types should produce a mutable reference type");
+    }
+}
+
 int main() {
     RUN(test_default_constructor);
     RUN(test_empty_generator);
@@ -179,5 +213,7 @@ int main() {
     RUN(test_range_based_for_loop_2);
     RUN(test_range_based_for_loop_3);
     RUN(test_dereference_iterator_copies_reference);
+    RUN(test_move_only_types);
+    RUN(test_immovable_types);
     return 0;
 }

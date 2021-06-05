@@ -14,7 +14,6 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 #include <memory>
-#pragma once
 
 #if __has_include(<coroutine>)
 #include <coroutine>
@@ -142,7 +141,39 @@ concept range = requires(_T& __t) {
 
 namespace std {
 
-struct use_allocator_arg {};
+template <typename _T>
+class __manual_lifetime {
+  public:
+    __manual_lifetime() noexcept {}
+    ~__manual_lifetime() {}
+
+    template <typename... _Args>
+    _T& construct(_Args&&... __args) noexcept(std::is_nothrow_constructible_v<_T, _Args...>) {
+        return *::new (static_cast<void*>(std::addressof(__value_))) _T((_Args&&)__args...);
+    }
+
+    void destruct() noexcept(std::is_nothrow_destructible_v<_T>) {
+        __value_.~_T();
+    }
+
+    _T& get() & noexcept {
+        return __value_;
+    }
+    _T&& get() && noexcept {
+        return static_cast<_T&&>(__value_);
+    }
+    const _T& get() const & noexcept {
+        return __value_;
+    }
+    const _T&& get() const && noexcept {
+        return static_cast<const _T&&>(__value_);
+    }
+
+  private:
+    union {
+        std::remove_const_t<_T> __value_;
+    };
+};
 
 struct use_allocator_arg {};
 
@@ -275,7 +306,7 @@ struct __generator_promise_base
 
     __generator_promise_base* __root_;
     std::coroutine_handle<> __parentOrLeaf_;
-    std::exception_ptr __exception_;
+    __manual_lifetime<std::exception_ptr> __exception_;
     std::add_pointer_t<__generator_storage_type_t<_Ref>> __value_;
 
     explicit __generator_promise_base(std::coroutine_handle<> thisCoro) noexcept
@@ -284,6 +315,12 @@ struct __generator_promise_base
     {}
 
     ~__generator_promise_base() {
+        if (__root_ != this) [[unlikely]] {
+            // This coroutine was used as a nested generator and so will
+            // have constructed its __exception_ member which needs to be
+            // destroyed here.
+            __exception_.destruct();
+        }
     }
 
     std::suspend_always initial_suspend() noexcept {
@@ -293,8 +330,8 @@ struct __generator_promise_base
     void return_void() noexcept {}
 
     void unhandled_exception() {
-        if (__root_ != this) {
-            __exception_ = std::current_exception();
+        if (__root_ != this)  [[unlikely]]  {
+            __exception_.get() = std::current_exception();
         } else {
             throw;
         }
@@ -340,8 +377,10 @@ struct __generator_promise_base
         return {};
     }
 
+
+
     template <typename T>
-    requires (is_constructible_v<__generator_storage_type_t<_Ref>, T>)
+    requires (is_constructible_v<__generator_storage_type_t<_Ref>, T>) && (!std::same_as<std::remove_cvref_t<__reference>, T>)
     auto yield_value(T&& __x)
     noexcept(std::is_nothrow_constructible_v<__generator_storage_type_t<_Ref>, T>) {
 
@@ -350,7 +389,6 @@ struct __generator_promise_base
 
         struct awaiter : std::suspend_always {
             __generator_storage_type_t<_Ref> __value;
-            std::exception_ptr __exception;
 
 
             awaiter(__generator_promise_base* __this, T&& __t) : __value((T&&)__t) {
@@ -359,11 +397,7 @@ struct __generator_promise_base
             awaiter(const awaiter&&) = delete;
             awaiter(awaiter&&) = delete;
 
-            void await_resume() {
-                if (__exception) {
-                    std::rethrow_exception(std::move(__exception));
-                }
-            }
+            void await_resume() noexcept{}
         };
         return awaiter(this, (T&&)(__x));
     };
@@ -390,9 +424,9 @@ struct __generator_promise_base
             __generator_promise_base& __current = __h.promise();
             __generator_promise_base& __nested = *__gen_.__get_promise();
             __generator_promise_base& __root = *__current.__root_;
-
             __nested.__root_ = __current.__root_;
             __nested.__parentOrLeaf_ = __h;
+            __nested.__exception_.construct();
             __root.__parentOrLeaf_ = __gen_.__get_coro();
 
             // Immediately resume the nested coroutine (nested generator)
@@ -402,8 +436,8 @@ struct __generator_promise_base
         void await_resume() {
             if (__gen_.__get_coro()) {
                 __generator_promise_base& __nestedPromise = *__gen_.__get_promise();
-                if (__nestedPromise.__exception_) {
-                    std::rethrow_exception(std::move(__nestedPromise.__exception_));
+                if (__nestedPromise.__exception_.get()) {
+                    std::rethrow_exception(std::move(__nestedPromise.__exception_.get()));
                 }
             }
         }

@@ -14,24 +14,6 @@
 
 #include "check.hpp"
 
-void test_yielding_elements_of_default_constructed_generator() {
-    bool started = false;
-    bool finished = false;
-    auto makeGen = [&]() -> std::generator<int> {
-        started = true;
-        co_yield std::ranges::elements_of(std::generator<int>{});
-        finished = true;
-    };
-
-    auto gen = makeGen();
-    CHECK(!started);
-    CHECK(!finished);
-    auto it = gen.begin();
-    CHECK(started);
-    CHECK(finished);
-    CHECK(it == gen.end());
-}
-
 void test_yielding_elements_of_empty_generator() {
     bool started1 = false;
     bool started2 = false;
@@ -319,7 +301,6 @@ void test_exception_propagating_from_nested_generator() {
 }
 
 int main() {
-    RUN(test_yielding_elements_of_default_constructed_generator);
     RUN(test_yielding_elements_of_empty_generator);
     RUN(test_yielding_elements_of_nested_one_level);
     RUN(test_yielding_elements_of_recursive);

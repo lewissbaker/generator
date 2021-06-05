@@ -408,12 +408,12 @@ struct __generator_promise_base
 
         __yield_sequence_awaiter(_Gen&& __g) noexcept
             // Taking ownership of the generator ensures frame are destroyed
-            // in the reverse order of their creation
+            // in the reverse order of their execution.
             : __gen_((_Gen&&)__g) {
         }
 
         bool await_ready() noexcept {
-            return !__gen_.__get_coro();
+            return false;
         }
 
         // set the parent, root and exceptions pointer and
@@ -439,11 +439,9 @@ struct __generator_promise_base
         }
 
         void await_resume() {
-            if (__gen_.__get_coro()) {
-                __generator_promise_base& __nestedPromise = *__gen_.__get_promise();
-                if (__nestedPromise.__exception_.get()) {
-                    std::rethrow_exception(std::move(__nestedPromise.__exception_.get()));
-                }
+            __generator_promise_base& __nestedPromise = *__gen_.__get_promise();
+            if (__nestedPromise.__exception_.get()) {
+                std::rethrow_exception(std::move(__nestedPromise.__exception_.get()));
             }
         }
     };
@@ -590,7 +588,7 @@ public:
         }
 
         friend bool operator==(const iterator &it, sentinel) noexcept {
-            return !it.__coro_ || it.__coro_.done();
+            return it.__coro_.done();
         }
 
         iterator &operator++() {
@@ -616,11 +614,10 @@ public:
     };
 
     iterator begin() {
-        if (__coro_) {
-            assert(!__started_);
-            __started_ = true;
-            __coro_.resume();
-        }
+        assert(__coro_);
+        assert(!__started_);
+        __started_ = true;
+        __coro_.resume();
         return iterator{__coro_};
     }
 
@@ -648,7 +645,11 @@ class generator<_Ref, _Value, use_allocator_arg> {
     using __promise_base = __generator_promise_base<_Ref>;
 public:
 
-    generator() noexcept = default;
+    generator() noexcept 
+        : __promise_(nullptr)
+        , __coro_()
+        , __started_(false)
+    {}
 
     generator(generator&& __other) noexcept
         : __promise_(std::exchange(__other.__promise_, nullptr))
@@ -695,15 +696,15 @@ public:
         {}
 
         iterator& operator=(iterator&& __other) {
-            std::swap(__promise_, __other.__promise_);
-            std::swap(__coro_, __other.__coro_);
+            __promise_ = std::exchange(__other.__promise_, nullptr);
+            __coro_ = std::exchange(__other.__coro_, {});
             return *this;
         }
 
         ~iterator() = default;
 
         friend bool operator==(const iterator &it, sentinel) noexcept {
-            return !it.__coro_ || it.__coro_.done();
+            return it.__coro_.done();
         }
 
         iterator& operator++() {
@@ -733,11 +734,10 @@ public:
     };
 
     iterator begin() {
-        if (__coro_) {
-            assert(!__started_);
-            __started_ = true;
-            __coro_.resume();
-        }
+        assert(__coro_);
+        assert(!__started_);
+        __started_ = true;
+        __coro_.resume();
         return iterator{__promise_, __coro_};
     }
 

@@ -163,8 +163,13 @@ void test_dereference_iterator_copies_reference() {
                 CHECK(ctorCount == beforeCtorCount);
                 CHECK(dtorCount == beforeDtorCount);
             }
+<<<<<<< HEAD
             CHECK(ctorCount == beforeCtorCount);
             CHECK(dtorCount == beforeDtorCount);
+=======
+            CHECK(ctorCount == beforeCtorCount + 1);
+            CHECK(dtorCount == beforeDtorCount + 1);
+>>>>>>> explicit_elements_of_alloc
         }
     }
 

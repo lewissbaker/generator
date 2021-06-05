@@ -324,13 +324,27 @@ struct __generator_promise_base
 
     __generator_promise_base* __root_;
     std::coroutine_handle<> __parentOrLeaf_;
-    std::exception_ptr *__exception_ = nullptr;
+    // Note: Using manual_lifetime here to avoid extra calls to exception_ptr
+    // constructor/destructor in cases where it is not needed (i.e. where this
+    // generator coroutine is not used as a nested coroutine).
+    // This member is lazily constructed by the __yield_sequence_awaiter::await_suspend()
+    // method if this generator is used as a nested generator.
+    __manual_lifetime<std::exception_ptr> __exception_;
     __manual_lifetime<_Ref> __value_;
 
     explicit __generator_promise_base(std::coroutine_handle<> thisCoro) noexcept
         : __root_(this)
         , __parentOrLeaf_(thisCoro)
     {}
+
+    ~__generator_promise_base() {
+        if (__root_ != this) {
+            // This coroutine was used as a nested generator and so will
+            // have constructed its __exception_ member which needs to be
+            // destroyed here.
+            __exception_.destruct();
+        }
+    }
 
     std::suspend_always initial_suspend() noexcept {
         return {};
@@ -339,10 +353,11 @@ struct __generator_promise_base
     void return_void() noexcept {}
 
     void unhandled_exception() {
-        if (__exception_ != nullptr) {
-            *__exception_ = std::current_exception();
+        if (__root_ != this) {
+            __exception_.get() = std::current_exception();
+        } else {
+            throw;
         }
-        throw;
     }
 
     // Transfers control back to the parent of a nested coroutine
@@ -390,7 +405,6 @@ struct __generator_promise_base
     template <typename _Gen>
     struct __yield_sequence_awaiter {
         _Gen __gen_;
-        std::exception_ptr __exception_;
 
         __yield_sequence_awaiter(_Gen&& __g) noexcept
             // Taking ownership of the generator ensures frame are destroyed
@@ -413,15 +427,23 @@ struct __generator_promise_base
 
             __nested.__root_ = __current.__root_;
             __nested.__parentOrLeaf_ = __h;
+
+            // Lazily construct the __exception_ member here now that we
+            // know it will be used as a nested generator. This will be
+            // destroyed by the promise destructor.
+            __nested.__exception_.construct();
             __root.__parentOrLeaf_ = __gen_.__get_coro();
-            __nested.__exception_ = &__exception_;
+
             // Immediately resume the nested coroutine (nested generator)
             return __gen_.__get_coro();
         }
 
         void await_resume() {
-            if (__exception_) {
-                std::rethrow_exception(std::move(__exception_));
+            if (__gen_.__get_coro()) {
+                __generator_promise_base& __nestedPromise = *__gen_.__get_promise();
+                if (__nestedPromise.__exception_.get()) {
+                    std::rethrow_exception(std::move(__nestedPromise.__exception_.get()));
+                }
             }
         }
     };
@@ -568,11 +590,11 @@ public:
         }
 
         friend bool operator==(const iterator &it, sentinel) noexcept {
-            return !it.coro_ || it.coro_.done();
+            return !it.__coro_ || it.__coro_.done();
         }
 
         iterator &operator++() {
-            __coro_.promise().value_.destruct();
+            __coro_.promise().__value_.destruct();
             __coro_.promise().resume();
             return *this;
         }
@@ -581,7 +603,7 @@ public:
         }
 
         reference operator*() const noexcept {
-            return static_cast<reference>(__coro_.promise().value_.get());
+            return static_cast<reference>(__coro_.promise().__value_.get());
         }
 
       private:

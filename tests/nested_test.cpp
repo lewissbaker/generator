@@ -8,6 +8,9 @@
 #include <generator>
 #include <string>
 #include <string_view>
+#include <vector>
+#include <memory>
+#include <exception>
 
 #include "check.hpp"
 
@@ -155,19 +158,164 @@ void test_yielding_elements_of_generator_with_different_value_type() {
 }
 
 void test_yielding_elements_of_generator_with_different_reference_type() {
-    // TODO
+    auto get_strings1 = []() -> std::generator<std::string> {
+        co_yield "foo";
+    };
+
+    auto get_strings2 = [&]() -> std::generator<std::string_view> {
+        co_yield std::ranges::elements_of(get_strings1());
+        co_yield "bar";
+    };
+
+    auto g = get_strings2();
+    auto it = g.begin();
+    CHECK(it != g.end());
+    CHECK(*it == "foo");
+    ++it;
+    CHECK(it != g.end());
+    CHECK(*it == "bar");
+    ++it;
+    CHECK(it == g.end());
 }
 
+struct counting_allocator_base {
+    static std::atomic<std::size_t> allocatedCount;
+};
+
+std::atomic<std::size_t> counting_allocator_base::allocatedCount{0};
+
+template<typename T>
+struct counting_allocator : counting_allocator_base {
+
+    using value_type = T;
+
+    T* allocate(size_t n) {
+        size_t size = n * sizeof(T);
+        T* p = std::allocator<T>{}.allocate(n);
+        counting_allocator_base::allocatedCount += size;
+        return p;
+    }
+
+    void deallocate(T* p, size_t n) {
+        size_t size = n * sizeof(T);
+        counting_allocator_base::allocatedCount -= size;
+        std::allocator<T>{}.deallocate(p, n);
+    }
+};
+
+
 void test_yielding_elements_of_generator_with_different_allocator_type() {
-    // TODO
+    // TODO: Ideally we'd be able to detect that yielding elements of a nested generator
+    // with a different allocator type wasn't wrapping the nested generator in another
+    // coroutine, but we can only really check this by inspecting assembly.
+    // So for now we just check that it is functional and ignore the runtime
+    // aspects of this.
+    auto g = []() -> std::generator<int,  int, std::allocator<std::byte>> {
+        co_yield std::ranges::elements_of([]() -> std::generator<int, int, counting_allocator<std::byte>> {
+            co_yield 42;
+        }());
+        co_yield 101;
+    }();
+
+    auto it = g.begin();
+    CHECK(it != g.end());
+    CHECK(*it == 42);
+    ++it;
+    CHECK(it != g.end());
+    CHECK(*it == 101);
+    ++it;
+    CHECK(it == g.end());
 }
 
 void test_yielding_elements_of_vector() {
-    // TODO
+    auto g = []() -> std::generator<int> {
+        std::vector<int> v = {2, 4, 6, 8};
+        co_yield std::ranges::elements_of(v);
+    }();
+
+    auto it = g.begin();
+    CHECK(it != g.end());
+    CHECK(*it == 2);
+    ++it;
+    CHECK(it != g.end());
+    CHECK(*it == 4);
+    ++it;
+    CHECK(it != g.end());
+    CHECK(*it == 6);
+    ++it;
+    CHECK(it != g.end());
+    CHECK(*it == 8);
+    ++it;
+    CHECK(it == g.end());
 }
 
+template<typename F>
+struct scope_guard {
+    F f;
+
+    scope_guard(F f) : f(std::move(f)) {}
+
+    scope_guard(scope_guard&&) = delete;
+    scope_guard(const scope_guard&) = delete;
+
+    ~scope_guard() {
+        f();
+    }
+};
+
 void test_nested_generator_scopes_exit_innermost_scope_first() {
-    // TODO
+    std::vector<int> events;
+    auto makeGen = [&]() -> std::generator<int> {
+        events.push_back(1);
+        scope_guard f{[&] { events.push_back(2); }};
+
+        auto nested = [&]() -> std::generator<int> {
+            events.push_back(3);
+            scope_guard g{[&] { events.push_back(4); }};
+
+            co_yield 42;  
+        }();
+        
+        scope_guard h{[&] { events.push_back(5); }};
+
+        co_yield std::ranges::elements_of(std::move(nested));
+    };
+
+    {
+        auto gen = makeGen();
+        auto it = gen.begin();
+        CHECK(*it == 42);
+        CHECK((events == std::vector{1, 3}));
+    }
+
+    CHECK((events == std::vector{1, 3, 4, 5, 2}));
+}
+
+void test_exception_propagating_from_nested_generator() {
+    struct my_error : std::exception {};
+
+    auto g = []() -> std::generator<int> {
+        try {
+            co_yield std::ranges::elements_of([]() -> std::generator<int> {
+                co_yield 42;
+                throw my_error{};
+            }());
+            CHECK(false);
+        } catch (const my_error&) {
+
+        }
+
+        co_yield 99;
+    }();
+
+    auto it = g.begin();
+    CHECK(it != g.end());
+    CHECK(*it == 42);
+    ++it;
+    CHECK(it != g.end());
+    CHECK(*it == 99);
+    ++it;
+    CHECK(it == g.end());
 }
 
 int main() {
@@ -180,5 +328,6 @@ int main() {
     RUN(test_yielding_elements_of_generator_with_different_allocator_type);
     RUN(test_yielding_elements_of_vector);
     RUN(test_nested_generator_scopes_exit_innermost_scope_first);
+    RUN(test_exception_propagating_from_nested_generator);
     return 0;
 }

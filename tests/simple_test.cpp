@@ -159,7 +159,7 @@ void test_dereference_iterator_copies_reference() {
                 CHECK(ctorCount == beforeCtorCount + 1);
                 CHECK(dtorCount == beforeDtorCount);
             }
-            CHECK(ctorCount = beforeCtorCount + 1);
+            CHECK(ctorCount == beforeCtorCount + 1);
             CHECK(dtorCount == beforeDtorCount + 1);
         }
     }

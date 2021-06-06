@@ -241,8 +241,8 @@ struct elements_of {
         return static_cast<_Rng&&>(__range);
     }
 
-    constexpr _Allocator&& get_allocator() noexcept {
-        return static_cast<_Allocator&&>(__alloc);
+    constexpr const _Allocator& get_allocator() noexcept {
+        return __alloc;
     }
 
 private:
@@ -469,18 +469,16 @@ struct __generator_promise_base
 
     template <std::ranges::range _Rng, typename _Allocator>
     __yield_sequence_awaiter<generator<_Ref, std::ranges::range_value_t<_Rng>, _Allocator>>
-    __yield_value(std::ranges::elements_of<_Rng, _Allocator> && __x) {
-        // TODO: Consider propagating parent coroutine's allocator to child generator
-        // coroutine here.
+    __do_yield_value(std::ranges::elements_of<_Rng, _Allocator> && __x) {
         // TODO: Should the promise type be templated on value to reduce template instantiations?
-        return [](auto && __rng, allocator_arg_t, _Allocator alloc) -> generator<_Ref, std::ranges::range_value_t<_Rng>, _Allocator> {
+        return [](allocator_arg_t, const _Allocator& alloc, auto && __rng) -> generator<_Ref, std::ranges::range_value_t<_Rng>, _Allocator> {
             auto __it = std::ranges::begin(__rng);
             auto __itEnd = std::ranges::end(__rng);
             while (__it != __itEnd) {
                 co_yield *__it;
                 ++__it;
             }
-        }(std::forward<_Rng>(__x.get()), std::allocator_arg, std::forward<_Allocator>(__x.get_allocator()));
+        }(std::allocator_arg, __x.get_allocator(), std::forward<_Rng>(__x.get()));
     }
 
     void resume() {
@@ -512,9 +510,9 @@ struct __generator_promise<generator<_Ref, _Value, _Alloc>, _ByteAllocator, _Exp
     template <std::ranges::range _Rng, typename _Allocator>
     auto yield_value(std::ranges::elements_of<_Rng, _Allocator> && __x) {
         static_assert (!(_ExplicitAllocator && std::same_as<std::remove_cvref_t<_Allocator>, use_allocator_arg>),
-        "This coroutine as an explicit allocator specified with std::allocator_arg so an allocator needs to be passed "
+        "This coroutine has an explicit allocator specified with std::allocator_arg so an allocator needs to be passed "
         "explicitely to std::elements_of");
-        return __generator_promise_base<_Ref>::__yield_value(std::forward<std::ranges::elements_of<_Rng, _Allocator>>(__x));
+        return __generator_promise_base<_Ref>::__do_yield_value(std::forward<std::ranges::elements_of<_Rng, _Allocator>>(__x));
     }
 };
 

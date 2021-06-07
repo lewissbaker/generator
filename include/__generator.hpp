@@ -504,20 +504,15 @@ struct __generator_promise<generator<_Ref, _Value, _Alloc>, _ByteAllocator, _Exp
     using __generator_promise_base<_Ref>::yield_value;
 
     template <std::ranges::range _Rng>
-    typename __generator_promise_base<_Ref>::template __yield_sequence_awaiter<generator<_Ref, std::remove_cvref_t<_Ref>, _Alloc>>
+    typename __generator_promise_base<_Ref>::template __yield_sequence_awaiter<generator<_Ref, _Value, _Alloc>>
     yield_value(std::ranges::elements_of<_Rng> && __x) {
         static_assert (!_ExplicitAllocator,
         "This coroutine has an explicit allocator specified with std::allocator_arg so an allocator needs to be passed "
         "explicitely to std::elements_of");
-        return [](auto && __rng) -> generator<_Ref, std::remove_cvref_t<_Ref>, _Alloc> {
+        return [](auto && __rng) -> generator<_Ref, _Value, _Alloc> {
             for(auto && e: __rng)
                 co_yield static_cast<decltype(e)>(e);
         }(std::forward<_Rng>(__x.get()));
-    }
-
-    template <std::ranges::range _Rng, typename _Allocator>
-    auto yield_value(std::ranges::elements_of<_Rng, _Allocator> && __x) {
-        return __generator_promise_base<_Ref>::yield_value(std::forward<std::ranges::elements_of<_Rng, _Allocator>>(__x));
     }
 };
 

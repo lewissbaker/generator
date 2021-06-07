@@ -469,15 +469,10 @@ struct __generator_promise_base
 
     template <std::ranges::range _Rng, typename _Allocator>
     __yield_sequence_awaiter<generator<_Ref, std::remove_cvref_t<_Ref>, _Allocator>>
-    __do_yield_value(std::ranges::elements_of<_Rng, _Allocator> && __x) {
-        // TODO: Should the promise type be templated on value to reduce template instantiations?
+    yield_value(std::ranges::elements_of<_Rng, _Allocator> && __x) {
         return [](allocator_arg_t, _Allocator alloc, auto && __rng) -> generator<_Ref, std::remove_cvref_t<_Ref>, _Allocator> {
-            auto __it = std::ranges::begin(__rng);
-            auto __itEnd = std::ranges::end(__rng);
-            while (__it != __itEnd) {
-                co_yield *__it;
-                ++__it;
-            }
+            for(auto && e: __rng)
+                co_yield static_cast<decltype(e)>(e);
         }(std::allocator_arg, __x.get_allocator(), std::forward<_Rng>(__x.get()));
     }
 
@@ -507,26 +502,28 @@ struct __generator_promise<generator<_Ref, _Value, _Alloc>, _ByteAllocator, _Exp
     }
 
     using __generator_promise_base<_Ref>::yield_value;
-    template <std::ranges::range _Rng, typename _Allocator>
-    auto yield_value(std::ranges::elements_of<_Rng, _Allocator> && __x) {
-        static_assert (!(_ExplicitAllocator && std::same_as<std::remove_cvref_t<_Allocator>, use_allocator_arg>),
+
+    template <std::ranges::range _Rng>
+    typename __generator_promise_base<_Ref>::template __yield_sequence_awaiter<generator<_Ref, std::remove_cvref_t<_Ref>, _Alloc>>
+    yield_value(std::ranges::elements_of<_Rng> && __x) {
+        static_assert (!_ExplicitAllocator,
         "This coroutine has an explicit allocator specified with std::allocator_arg so an allocator needs to be passed "
         "explicitely to std::elements_of");
-        return __generator_promise_base<_Ref>::__do_yield_value(std::forward<std::ranges::elements_of<_Rng, _Allocator>>(__x));
+        return [](auto && __rng) -> generator<_Ref, std::remove_cvref_t<_Ref>, _Alloc> {
+            for(auto && e: __rng)
+                co_yield static_cast<decltype(e)>(e);
+        }(std::forward<_Rng>(__x.get()));
+    }
+
+    template <std::ranges::range _Rng, typename _Allocator>
+    auto yield_value(std::ranges::elements_of<_Rng, _Allocator> && __x) {
+        return __generator_promise_base<_Ref>::yield_value(std::forward<std::ranges::elements_of<_Rng, _Allocator>>(__x));
     }
 };
 
 template<typename _Alloc>
-struct __byte_allocator {
-    using type = typename std::allocator_traits<std::remove_cvref_t<_Alloc>>::template rebind_alloc<std::byte>;
-};
-template<>
-struct __byte_allocator<std::use_allocator_arg>  {
-    using type = std::allocator<std::byte>;
-};
+using __byte_allocator_t = typename std::allocator_traits<std::remove_cvref_t<_Alloc>>::template rebind_alloc<std::byte>;
 
-template<typename _Alloc>
-using __byte_allocator_t = typename __byte_allocator<_Alloc>::type;
 
 // Type-erased allocator with default allocator behaviour.
 template<typename _Ref, typename _Value, typename... _Args>

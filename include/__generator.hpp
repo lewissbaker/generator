@@ -468,10 +468,10 @@ struct __generator_promise_base
     }
 
     template <std::ranges::range _Rng, typename _Allocator>
-    __yield_sequence_awaiter<generator<_Ref, std::ranges::range_value_t<_Rng>, _Allocator>>
+    __yield_sequence_awaiter<generator<_Ref, std::remove_cvref_t<_Ref>, _Allocator>>
     __do_yield_value(std::ranges::elements_of<_Rng, _Allocator> && __x) {
         // TODO: Should the promise type be templated on value to reduce template instantiations?
-        return [](allocator_arg_t, _Allocator alloc, auto && __rng) -> generator<_Ref, std::ranges::range_value_t<_Rng>, _Allocator> {
+        return [](allocator_arg_t, _Allocator alloc, auto && __rng) -> generator<_Ref, std::remove_cvref_t<_Ref>, _Allocator> {
             auto __it = std::ranges::begin(__rng);
             auto __itEnd = std::ranges::end(__rng);
             while (__it != __itEnd) {

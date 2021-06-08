@@ -217,13 +217,19 @@ class __manual_lifetime<_T&&> {
     _T* __value_;
 };
 
+struct use_allocator_arg {};
+
 namespace ranges {
 
-template <typename _Rng>
+template <typename _Rng, typename _Allocator = use_allocator_arg>
 struct elements_of {
     explicit constexpr elements_of(_Rng&& __rng) noexcept
-    : __range_(static_cast<_Rng&&>(__rng))
+    requires std::is_default_constructible_v<_Allocator>
+    : __range(static_cast<_Rng&&>(__rng))
     {}
+
+    constexpr elements_of(_Rng&& __rng, _Allocator&& __alloc) noexcept
+    : __range((_Rng&&)__rng), __alloc((_Allocator&&)__alloc) {}
 
     constexpr elements_of(elements_of&&) noexcept = default;
 
@@ -231,16 +237,24 @@ struct elements_of {
     constexpr elements_of &operator=(const elements_of &) = delete;
     constexpr elements_of &operator=(elements_of &&) = delete;
 
-    constexpr _Rng&& get() && noexcept {
-        return static_cast<_Rng&&>(__range_);
+    constexpr _Rng&& get() noexcept {
+        return static_cast<_Rng&&>(__range);
+    }
+
+    constexpr _Allocator get_allocator() const noexcept {
+        return __alloc;
     }
 
 private:
-    _Rng &&__range_; // \expos
+    [[no_unique_address]] _Allocator __alloc; // \expos
+    _Rng && __range; // \expos
 };
 
 template <typename _Rng>
 elements_of(_Rng &&) -> elements_of<_Rng>;
+
+template <typename _Rng, typename Allocator>
+elements_of(_Rng &&, Allocator&&) -> elements_of<_Rng, Allocator>;
 
 } // namespace ranges
 
@@ -254,7 +268,6 @@ constexpr size_t __aligned_allocation_size(size_t s, size_t a) {
     return (s + a - 1) & ~(a - 1);
 }
 
-struct use_allocator_arg {};
 
 template <typename _Ref,
           typename _Value = std::remove_cvref_t<_Ref>,
@@ -452,18 +465,13 @@ struct __generator_promise_base
         return std::move(__g).get();
     }
 
-    template <std::ranges::range _Rng>
-    __yield_sequence_awaiter<generator<_Ref>> yield_value(std::ranges::elements_of<_Rng> __x) {
-        // TODO: Consider propagating parent coroutine's allocator to child generator
-        // coroutine here.
-        return yield_value(std::ranges::elements_of([](_Rng&& __rng) -> generator<_Ref> {
-            auto __it = std::ranges::begin(__rng);
-            auto __itEnd = std::ranges::end(__rng);
-            while (__it != __itEnd) {
-                co_yield *__it;
-                ++__it;
-            }
-        }(std::move(__x).get())));
+    template <std::ranges::range _Rng, typename _Allocator>
+    __yield_sequence_awaiter<generator<_Ref, std::remove_cvref_t<_Ref>, _Allocator>>
+    yield_value(std::ranges::elements_of<_Rng, _Allocator> && __x) {
+        return [](allocator_arg_t, _Allocator alloc, auto && __rng) -> generator<_Ref, std::remove_cvref_t<_Ref>, _Allocator> {
+            for(auto && e: __rng)
+                co_yield static_cast<decltype(e)>(e);
+        }(std::allocator_arg, __x.get_allocator(), std::forward<_Rng>(__x.get()));
     }
 
     void resume() {
@@ -474,11 +482,11 @@ struct __generator_promise_base
     void await_transform() = delete;
 };
 
-template<typename _Generator, typename _ByteAllocator>
+template<typename _Generator, typename _ByteAllocator, bool _ExplicitAllocator = false>
 struct __generator_promise;
 
-template<typename _Ref, typename _Value, typename _Alloc, typename _ByteAllocator>
-struct __generator_promise<generator<_Ref, _Value, _Alloc>, _ByteAllocator> final
+template<typename _Ref, typename _Value, typename _Alloc, typename _ByteAllocator, bool _ExplicitAllocator>
+struct __generator_promise<generator<_Ref, _Value, _Alloc>, _ByteAllocator, _ExplicitAllocator> final
     : public __generator_promise_base<_Ref>
     , public __promise_base_alloc<_ByteAllocator> {
     __generator_promise() noexcept
@@ -490,7 +498,25 @@ struct __generator_promise<generator<_Ref, _Value, _Alloc>, _ByteAllocator> fina
             std::coroutine_handle<__generator_promise>::from_promise(*this)
         };
     }
+
+    using __generator_promise_base<_Ref>::yield_value;
+
+    template <std::ranges::range _Rng>
+    typename __generator_promise_base<_Ref>::template __yield_sequence_awaiter<generator<_Ref, _Value, _Alloc>>
+    yield_value(std::ranges::elements_of<_Rng> && __x) {
+        static_assert (!_ExplicitAllocator,
+        "This coroutine has an explicit allocator specified with std::allocator_arg so an allocator needs to be passed "
+        "explicitely to std::elements_of");
+        return [](auto && __rng) -> generator<_Ref, _Value, _Alloc> {
+            for(auto && e: __rng)
+                co_yield static_cast<decltype(e)>(e);
+        }(std::forward<_Rng>(__x.get()));
+    }
 };
+
+template<typename _Alloc>
+using __byte_allocator_t = typename std::allocator_traits<std::remove_cvref_t<_Alloc>>::template rebind_alloc<std::byte>;
+
 
 // Type-erased allocator with default allocator behaviour.
 template<typename _Ref, typename _Value, typename... _Args>
@@ -502,24 +528,24 @@ struct coroutine_traits<generator<_Ref, _Value>, _Args...> {
 template<typename _Ref, typename _Value, typename _Alloc, typename... _Args>
 struct coroutine_traits<generator<_Ref, _Value>, allocator_arg_t, _Alloc, _Args...> {
 private:
-    using __byte_allocator = typename std::allocator_traits<std::remove_cvref_t<_Alloc>>::template rebind_alloc<std::byte>;
+    using __byte_allocator = __byte_allocator_t<_Alloc>;
 public:
-    using promise_type = __generator_promise<generator<_Ref, _Value>, __byte_allocator>;
+    using promise_type = __generator_promise<generator<_Ref, _Value>, __byte_allocator, true /*explicit Allocator*/>;
 };
 
 // Type-erased allocator with std::allocator_arg parameter (non-static member functions)
 template<typename _Ref, typename _Value, typename _This, typename _Alloc, typename... _Args>
 struct coroutine_traits<generator<_Ref, _Value>, _This, allocator_arg_t, _Alloc, _Args...> {
 private:
-    using __byte_allocator = typename std::allocator_traits<std::remove_cvref_t<_Alloc>>::template rebind_alloc<std::byte>;
+    using __byte_allocator = __byte_allocator_t<_Alloc>;
 public:
-    using promise_type = __generator_promise<generator<_Ref, _Value>, __byte_allocator>;
+    using promise_type = __generator_promise<generator<_Ref, _Value>, __byte_allocator,  true /*explicit Allocator*/>;
 };
 
 // Generator with specified allocator type
 template<typename _Ref, typename _Value, typename _Alloc, typename... _Args>
 struct coroutine_traits<generator<_Ref, _Value, _Alloc>, _Args...> {
-    using __byte_allocator = typename std::allocator_traits<std::remove_cvref_t<_Alloc>>::template rebind_alloc<std::byte>;
+    using __byte_allocator = __byte_allocator_t<_Alloc>;
 public:
     using promise_type = __generator_promise<generator<_Ref, _Value, _Alloc>, __byte_allocator>;
 };
@@ -528,7 +554,7 @@ public:
 // TODO :  make layout compatible promise casts possible
 template <typename _Ref, typename _Value, typename _Alloc>
 class generator {
-    using __byte_allocator = typename std::allocator_traits<std::remove_cvref_t<_Alloc>>::template rebind_alloc<std::byte>;
+    using __byte_allocator = __byte_allocator_t<_Alloc>;
 public:
     using promise_type = __generator_promise<generator<_Ref, _Value, _Alloc>, __byte_allocator>;
     friend promise_type;
@@ -746,7 +772,7 @@ public:
     }
 
 private:
-    template<typename _Generator, typename _ByteAllocator>
+    template<typename _Generator, typename _ByteAllocator, bool _ExplicitAllocator>
     friend struct __generator_promise;
 
     template<typename _Promise>

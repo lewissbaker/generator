@@ -255,9 +255,9 @@ void test_nested_generator_scopes_exit_innermost_scope_first() {
             events.push_back(3);
             scope_guard g{[&] { events.push_back(4); }};
 
-            co_yield 42;  
+            co_yield 42;
         }();
-        
+
         scope_guard h{[&] { events.push_back(5); }};
 
         co_yield std::ranges::elements_of(std::move(nested));
@@ -300,6 +300,18 @@ void test_exception_propagating_from_nested_generator() {
     CHECK(it == g.end());
 }
 
+void test_elementsof_with_allocator_args() {
+    std::vector<int> v;
+    auto with_alloc = [&] (std::allocator_arg_t, std::allocator<std::byte> a) -> std::generator<int> {
+            co_yield 42;
+            //co_yield std::ranges::elements_of(v);
+            co_yield std::ranges::elements_of(v, a);
+    };
+    for(auto && i : with_alloc(std::allocator_arg, {})){
+
+    }
+}
+
 int main() {
     RUN(test_yielding_elements_of_empty_generator);
     RUN(test_yielding_elements_of_nested_one_level);
@@ -307,6 +319,7 @@ int main() {
     RUN(test_yielding_elements_of_generator_with_different_value_type);
     RUN(test_yielding_elements_of_generator_with_different_reference_type);
     RUN(test_yielding_elements_of_generator_with_different_allocator_type);
+    RUN(test_elementsof_with_allocator_args);
     RUN(test_yielding_elements_of_vector);
     RUN(test_nested_generator_scopes_exit_innermost_scope_first);
     RUN(test_exception_propagating_from_nested_generator);

@@ -29,7 +29,6 @@ static_assert(std::is_same_v<
 
 void test_default_constructor() {
     std::generator<int> g;
-    CHECK(g.begin() == g.end());
 }
 
 void test_empty_generator() {

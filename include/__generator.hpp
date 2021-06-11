@@ -236,7 +236,7 @@ template <typename _Type>
 using __default_generator_value_type_t = std::remove_cvref_t<__generator_reference_type_t<_Type>>;
 
 template <typename _Type>
-using __generator_storage_type_t = std::remove_reference_t<__generator_reference_type_t<_Type>>;
+using __generator_storage_type_t = std::remove_cvref_t<__generator_reference_type_t<_Type>>;
 
 
 template <typename _Ref,
@@ -299,6 +299,11 @@ public:
     }
 };
 
+template <typename T>
+constexpr bool __cheap_to_copy = std::is_trivial_v<T> &&
+    std::is_trivially_copy_constructible_v<T> && sizeof(T) <= sizeof(std::size_t);
+
+
 template<typename _Ref>
 struct __generator_promise_base
 {
@@ -308,7 +313,12 @@ struct __generator_promise_base
     __generator_promise_base* __root_;
     std::coroutine_handle<> __parentOrLeaf_;
     __manual_lifetime<std::exception_ptr> __exception_;
-    std::add_pointer_t<__generator_storage_type_t<_Ref>> __value_;
+
+    static constexpr bool __is_cheap = __cheap_to_copy<__generator_storage_type_t<_Ref>>;
+
+    std::conditional_t<__is_cheap,
+                       __generator_storage_type_t<_Ref>,
+                       std::add_pointer_t<__generator_storage_type_t<_Ref>>> __value_;
 
     explicit __generator_promise_base(std::coroutine_handle<> thisCoro) noexcept
         : __root_(this)
@@ -368,18 +378,33 @@ struct __generator_promise_base
     using __reference_decayed = std::remove_cvref_t<__reference>;
 
     std::suspend_always yield_value(__reference_decayed & __x) noexcept {
-        __root_->__value_ = std::addressof(__x);
+        if constexpr (__is_cheap) {
+            __root_->__value_ = __x;
+        }
+        else {
+            __root_->__value_ = std::addressof(__x);
+        }
         return {};
     }
 
     std::suspend_always yield_value(__reference_decayed&& __x) noexcept  {
-        __root_->__value_ = std::addressof(__x);
+        if constexpr (__is_cheap) {
+            __root_->__value_ = __x;
+        }
+        else {
+            __root_->__value_ = std::addressof(__x);
+        }
         return {};
     }
 
     std::suspend_always yield_value(const __reference_decayed & __x) noexcept
     requires (std::is_const_v<std::remove_reference_t<__reference>>){
-        __root_->__value_ = std::addressof(__x);
+        if constexpr (__is_cheap) {
+            __root_->__value_ = __x;
+        }
+        else {
+            __root_->__value_ = std::addressof(__x);
+        }
         return {};
     }
 
@@ -588,7 +613,12 @@ public:
         }
 
         reference operator*() const noexcept {
-            return static_cast<reference>(*__coro_.promise().__value_);
+            if constexpr(promise_type::__is_cheap) {
+                return static_cast<reference>(__coro_.promise().__value_);
+            }
+            else {
+                return static_cast<reference>(*__coro_.promise().__value_);
+            }
         }
 
       private:
@@ -701,7 +731,12 @@ public:
         }
 
         reference operator*() const noexcept {
-            return static_cast<reference>(*__promise_->__value_);
+            if constexpr(__promise_base::__is_cheap) {
+                return static_cast<reference>(__promise_->__value_);
+            }
+            else {
+                return static_cast<reference>(*__promise_->__value_);
+            }
         }
 
       private:

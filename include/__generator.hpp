@@ -365,38 +365,23 @@ struct __generator_promise_base
     }
 
     using __reference = __generator_reference_type_t<_Ref>;
+    using __reference_decayed = std::remove_cvref_t<__reference>;
 
-    template <typename T = __reference>
-    requires (std::same_as<std::remove_cvref_t<__reference>, std::remove_cvref_t<T>> && (
-        std::is_const_v<std::remove_reference_t<__reference>> ||
-        (std::is_lvalue_reference_v<__reference> == std::is_lvalue_reference_v<T>)))
-    std::suspend_always yield_value(T&& __x) noexcept  {
+    std::suspend_always yield_value(__reference_decayed & __x) noexcept {
         __root_->__value_ = std::addressof(__x);
         return {};
     }
 
-    template <typename T>
-    requires (is_constructible_v<__generator_storage_type_t<_Ref>, T&&>) && (!std::same_as<std::remove_cvref_t<__reference>,  std::remove_cvref_t<T>>)
-    auto yield_value(T&& __x)
-    noexcept(std::is_nothrow_constructible_v<__generator_storage_type_t<_Ref>, T>) {
+    std::suspend_always yield_value(__reference_decayed&& __x) noexcept  {
+        __root_->__value_ = std::addressof(__x);
+        return {};
+    }
 
-        static_assert(std::is_nothrow_convertible_v<__generator_storage_type_t<_Ref>,
-                __generator_reference_type_t<_Ref>>);
-
-        struct awaiter : std::suspend_always {
-            __generator_storage_type_t<_Ref> __value;
-
-
-            awaiter(__generator_promise_base* __this, T&& __t) : __value((T&&)__t) {
-                __this->__root_->__value_ = std::addressof(__value);
-            }
-            awaiter(const awaiter&&) = delete;
-            awaiter(awaiter&&) = delete;
-
-            void await_resume() noexcept{}
-        };
-        return awaiter(this, (T&&)(__x));
-    };
+    std::suspend_always yield_value(const __reference_decayed & __x) noexcept
+    requires (std::is_const_v<std::remove_reference_t<__reference>>){
+        __root_->__value_ = std::addressof(__x);
+        return {};
+    }
 
     template <typename _Gen>
     struct __yield_sequence_awaiter {

@@ -88,9 +88,7 @@ void test_range_based_for_loop_2() {
         static_assert(std::is_same_v<decltype(x), const X&>);
 
         // 1. temporary in co_yield expression
-        // 2. reference value stored in promise
-        // 3. iteration variable
-        CHECK(count == 2);
+        CHECK(count == 1);
         ++elementCount;
     }
 
@@ -122,8 +120,7 @@ void test_range_based_for_loop_3() {
         static_assert(std::is_same_v<decltype(x), const X&>);
 
         // 1. temporary in co_yield expression
-        // 2. move inside awaiter
-        CHECK(count == 2);
+        CHECK(count == 1);
         ++elementCount;
     }
 

@@ -377,7 +377,8 @@ struct __generator_promise_base
     using __reference = __generator_reference_type_t<_Ref>;
     using __reference_decayed = std::remove_cvref_t<__reference>;
 
-    std::suspend_always yield_value(__reference_decayed & __x) noexcept {
+    std::suspend_always yield_value(__reference_decayed & __x) noexcept
+    requires (!std::is_const_v<std::remove_reference_t<__reference>>) {
         if constexpr (__is_cheap) {
             __root_->__value_ = __x;
         }
@@ -397,8 +398,7 @@ struct __generator_promise_base
         return {};
     }
 
-    std::suspend_always yield_value(const __reference_decayed & __x) noexcept
-    requires (std::is_const_v<std::remove_reference_t<__reference>>){
+    std::suspend_always yield_value(const __reference_decayed & __x) noexcept {
         if constexpr (__is_cheap) {
             __root_->__value_ = __x;
         }

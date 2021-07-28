@@ -11,6 +11,7 @@
 #include <vector>
 #include <memory>
 #include <exception>
+#include <atomic>
 
 #include "check.hpp"
 
@@ -256,11 +257,11 @@ void test_nested_generator_scopes_exit_innermost_scope_first() {
             scope_guard g{[&] { events.push_back(4); }};
 
             co_yield 42;
-        }();
+        };
 
         scope_guard h{[&] { events.push_back(5); }};
 
-        co_yield std::ranges::elements_of(std::move(nested));
+        co_yield std::ranges::elements_of(std::move(nested()));
     };
 
     {

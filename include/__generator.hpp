@@ -13,7 +13,7 @@
 // (See accompanying file LICENSE or http://www.boost.org/LICENSE_1_0.txt)
 ///////////////////////////////////////////////////////////////////////////////
 
-#pragma once
+#include <memory>
 
 #if __has_include(<coroutine>)
 #include <coroutine>
@@ -175,48 +175,6 @@ class __manual_lifetime {
     };
 };
 
-template <typename _T>
-class __manual_lifetime<_T&> {
-  public:
-    __manual_lifetime() noexcept : __value_(nullptr) {}
-    ~__manual_lifetime() {}
-
-    _T& construct(_T& __value) noexcept {
-        __value_ = std::addressof(__value);
-        return __value;
-    }
-
-    void destruct() noexcept {}
-
-    _T& get() const noexcept {
-        return *__value_;
-    }
-
-  private:
-    _T* __value_;
-};
-
-template <typename _T>
-class __manual_lifetime<_T&&> {
-  public:
-    __manual_lifetime() noexcept : __value_(nullptr) {}
-    ~__manual_lifetime() {}
-
-    _T&& construct(_T&& __value) noexcept {
-        __value_ = std::addressof(__value);
-        return static_cast<_T&&>(__value);
-    }
-
-    void destruct() noexcept {}
-
-    _T&& get() const noexcept {
-        return static_cast<_T&&>(*__value_);
-    }
-
-  private:
-    _T* __value_;
-};
-
 struct use_allocator_arg {};
 
 namespace ranges {
@@ -269,8 +227,20 @@ constexpr size_t __aligned_allocation_size(size_t s, size_t a) {
 }
 
 
+template <typename _Type>
+using __generator_reference_type_t = std::conditional_t<
+    !std::is_reference<_Type>::value,
+    std::add_lvalue_reference_t<std::add_const_t<_Type>>, _Type>;
+
+template <typename _Type>
+using __default_generator_value_type_t = std::remove_cvref_t<__generator_reference_type_t<_Type>>;
+
+template <typename _Type>
+using __generator_storage_type_t = std::remove_cvref_t<__generator_reference_type_t<_Type>>;
+
+
 template <typename _Ref,
-          typename _Value = std::remove_cvref_t<_Ref>,
+          typename _Value     = __default_generator_value_type_t<_Ref>,
           typename _Allocator = use_allocator_arg>
 class generator;
 
@@ -329,6 +299,11 @@ public:
     }
 };
 
+template <typename T>
+constexpr bool __cheap_to_copy = std::is_trivial_v<T> &&
+    std::is_trivially_copy_constructible_v<T> && sizeof(T) <= sizeof(std::size_t);
+
+
 template<typename _Ref>
 struct __generator_promise_base
 {
@@ -337,13 +312,13 @@ struct __generator_promise_base
 
     __generator_promise_base* __root_;
     std::coroutine_handle<> __parentOrLeaf_;
-    // Note: Using manual_lifetime here to avoid extra calls to exception_ptr
-    // constructor/destructor in cases where it is not needed (i.e. where this
-    // generator coroutine is not used as a nested coroutine).
-    // This member is lazily constructed by the __yield_sequence_awaiter::await_suspend()
-    // method if this generator is used as a nested generator.
     __manual_lifetime<std::exception_ptr> __exception_;
-    __manual_lifetime<_Ref> __value_;
+
+    static constexpr bool __is_cheap = __cheap_to_copy<__generator_storage_type_t<_Ref>>;
+
+    std::conditional_t<__is_cheap,
+                       __generator_storage_type_t<_Ref>,
+                       std::add_pointer_t<__generator_storage_type_t<_Ref>>> __value_;
 
     explicit __generator_promise_base(std::coroutine_handle<> thisCoro) noexcept
         : __root_(this)
@@ -351,7 +326,7 @@ struct __generator_promise_base
     {}
 
     ~__generator_promise_base() {
-        if (__root_ != this) {
+        if (__root_ != this) [[unlikely]] {
             // This coroutine was used as a nested generator and so will
             // have constructed its __exception_ member which needs to be
             // destroyed here.
@@ -366,7 +341,7 @@ struct __generator_promise_base
     void return_void() noexcept {}
 
     void unhandled_exception() {
-        if (__root_ != this) {
+        if (__root_ != this)  [[unlikely]]  {
             __exception_.get() = std::current_exception();
         } else {
             throw;
@@ -399,19 +374,37 @@ struct __generator_promise_base
         return {};
     }
 
-    std::suspend_always yield_value(_Ref&& __x)
-            noexcept(std::is_nothrow_move_constructible_v<_Ref>) {
-        __root_->__value_.construct((_Ref&&)__x);
+    using __reference = __generator_reference_type_t<_Ref>;
+    using __reference_decayed = std::remove_cvref_t<__reference>;
+
+    std::suspend_always yield_value(__reference_decayed & __x) noexcept
+    requires (!std::is_const_v<std::remove_reference_t<__reference>>) {
+        if constexpr (__is_cheap) {
+            __root_->__value_ = __x;
+        }
+        else {
+            __root_->__value_ = std::addressof(__x);
+        }
         return {};
     }
 
-    template <typename _T>
-    requires
-        (!std::is_reference_v<_Ref>) &&
-        std::is_convertible_v<_T, _Ref>
-    std::suspend_always yield_value(_T&& __x)
-            noexcept(std::is_nothrow_constructible_v<_Ref, _T>) {
-        __root_->__value_.construct((_T&&)__x);
+    std::suspend_always yield_value(__reference_decayed&& __x) noexcept  {
+        if constexpr (__is_cheap) {
+            __root_->__value_ = __x;
+        }
+        else {
+            __root_->__value_ = std::addressof(__x);
+        }
+        return {};
+    }
+
+    std::suspend_always yield_value(const __reference_decayed & __x) noexcept {
+        if constexpr (__is_cheap) {
+            __root_->__value_ = __x;
+        }
+        else {
+            __root_->__value_ = std::addressof(__x);
+        }
         return {};
     }
 
@@ -437,13 +430,8 @@ struct __generator_promise_base
             __generator_promise_base& __current = __h.promise();
             __generator_promise_base& __nested = *__gen_.__get_promise();
             __generator_promise_base& __root = *__current.__root_;
-
             __nested.__root_ = __current.__root_;
             __nested.__parentOrLeaf_ = __h;
-
-            // Lazily construct the __exception_ member here now that we
-            // know it will be used as a nested generator. This will be
-            // destroyed by the promise destructor.
             __nested.__exception_.construct();
             __root.__parentOrLeaf_ = __gen_.__get_coro();
 
@@ -452,9 +440,11 @@ struct __generator_promise_base
         }
 
         void await_resume() {
-            __generator_promise_base& __nestedPromise = *__gen_.__get_promise();
-            if (__nestedPromise.__exception_.get()) {
-                std::rethrow_exception(std::move(__nestedPromise.__exception_.get()));
+            if (__gen_.__get_coro()) {
+                __generator_promise_base& __nestedPromise = *__gen_.__get_promise();
+                if (__nestedPromise.__exception_.get()) {
+                    std::rethrow_exception(std::move(__nestedPromise.__exception_.get()));
+                }
             }
         }
     };
@@ -571,9 +561,6 @@ public:
 
     ~generator() noexcept {
         if (__coro_) {
-            if (__started_ && !__coro_.done()) {
-                __coro_.promise().__value_.destruct();
-            }
             __coro_.destroy();
         }
     }
@@ -595,7 +582,7 @@ public:
         using iterator_category = std::input_iterator_tag;
         using difference_type = std::ptrdiff_t;
         using value_type = _Value;
-        using reference = _Ref;
+        using reference  = __generator_reference_type_t<_Ref>;
         using pointer = std::add_pointer_t<_Ref>;
 
         iterator() noexcept = default;
@@ -618,7 +605,6 @@ public:
         }
 
         iterator &operator++() {
-            __coro_.promise().__value_.destruct();
             __coro_.promise().resume();
             return *this;
         }
@@ -627,7 +613,12 @@ public:
         }
 
         reference operator*() const noexcept {
-            return static_cast<reference>(__coro_.promise().__value_.get());
+            if constexpr(promise_type::__is_cheap) {
+                return static_cast<reference>(__coro_.promise().__value_);
+            }
+            else {
+                return static_cast<reference>(*__coro_.promise().__value_);
+            }
         }
 
       private:
@@ -671,7 +662,7 @@ class generator<_Ref, _Value, use_allocator_arg> {
     using __promise_base = __generator_promise_base<_Ref>;
 public:
 
-    generator() noexcept 
+    generator() noexcept
         : __promise_(nullptr)
         , __coro_()
         , __started_(false)
@@ -685,9 +676,6 @@ public:
 
     ~generator() noexcept {
         if (__coro_) {
-            if (__started_ && !__coro_.done()) {
-                __promise_->__value_.destruct();
-            }
             __coro_.destroy();
         }
     }
@@ -710,8 +698,8 @@ public:
         using iterator_category = std::input_iterator_tag;
         using difference_type = std::ptrdiff_t;
         using value_type = _Value;
-        using reference = _Ref;
-        using pointer = std::add_pointer_t<_Ref>;
+        using reference  = __generator_reference_type_t<_Ref>;
+        using pointer    = std::add_pointer_t<__generator_storage_type_t<_Ref>>;
 
         iterator() noexcept = default;
         iterator(const iterator &) = delete;
@@ -734,7 +722,6 @@ public:
         }
 
         iterator& operator++() {
-            __promise_->__value_.destruct();
             __promise_->resume();
             return *this;
         }
@@ -744,7 +731,12 @@ public:
         }
 
         reference operator*() const noexcept {
-            return static_cast<reference>(__promise_->__value_.get());
+            if constexpr(__promise_base::__is_cheap) {
+                return static_cast<reference>(__promise_->__value_);
+            }
+            else {
+                return static_cast<reference>(*__promise_->__value_);
+            }
         }
 
       private:

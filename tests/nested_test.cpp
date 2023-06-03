@@ -5,6 +5,7 @@
 // Version 1.0.
 // (See accompanying file LICENSE or http://www.boost.org/LICENSE_1_0.txt)
 ///////////////////////////////////////////////////////////////////////////////
+#include <atomic>
 #include <generator>
 #include <string>
 #include <string_view>

@@ -309,7 +309,7 @@ public:
     static void operator delete(void* __ptr, std::size_t __frameSize) noexcept {
         _Alloc& __alloc = __get_allocator(__ptr, __frameSize);
         _Alloc __localAlloc(std::move(__alloc));
-        __alloc.~Alloc();
+        __alloc.~_Alloc();
         __localAlloc.deallocate(static_cast<std::byte*>(__ptr), __padded_frame_size(__frameSize));
     }
 };

@@ -11,6 +11,7 @@
 #include <vector>
 #include <memory>
 #include <exception>
+#include <atomic>
 
 #include "check.hpp"
 
